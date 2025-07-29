@@ -1,12 +1,12 @@
 // -------------------- Bibliotheken --------------------
-#include <MD_Parola.h>
-#include <MD_MAX72xx.h>
+#include <MD_Parola.h>  //Virtuelle Displays und direkt Buchstaben
+#include <MD_MAX72xx.h> // Grundsatz für Steuerung von Matrizen
 #include <SPI.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <Preferences.h>
+#include <WiFi.h>       //Für Hotspot für WebUI
+#include <WebServer.h>  //Webui
+#include <Preferences.h>//WLAN konfiguration behalten
 #include <HardwareSerial.h>
-#include "Font_Data.h"
+#include "Font_Data.h"  //Custom double font
 #include <math.h>
 
 // -------------------- Anzeige-Konfiguration --------------------
@@ -18,21 +18,22 @@
 MD_Parola display(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, DEVICES);
 
 // -------------------- Parameter --------------------
-const float Reibung     = 0.7f;    // Reibungskoeffizient (trocken)
-const float Reaktionszeit   = 1.0f;    // Reaktionszeit Hintermann (s)
-const float g      = 9.81f;   // Erdbeschleunigung (m/s²)
+const float Reibung     = 0.7f;       // Reibungskoeffizient (trocken)
+const float Reaktionszeit   = 1.0f;   // Reaktionszeit Hintermann (s)
+const float g      = 9.81f;           // Erdbeschleunigung (m/s²)
 
-//--------------------- Andere Variablen --------------------
+// -------------------- Variablen für Sicherheitsabstandsberechnungen --------------------
 uint8_t currentMsgIndex = 0;
-unsigned long lastMsgChange = 0;
-float s_safe = 0.0f;  //Sicherer Abstand
-float s_safe_phys = 0.0f;
+unsigned long lastRotationChange = 0; //Zeit seit anderem Text auf matrix
+float s_safe = 0.0f;        //Sicherer Abstand (Faustregel)
+float s_safe_phys = 0.0f;   //Sicherer Abstand (Physikalisch, idealbedingungen)
 
 // -------------------- Text-Puffer & Status --------------------
 char textBuffer[100];
 uint16_t abstandCm            = 0;
 bool     SystemActive         = true;
 char     customMsg[50]        = "";
+char     warningMsg[50]       = "";
 unsigned long msgTimestamp    = 0;
 
 // -------------------- Netzwerk & Sensoren --------------------
@@ -40,12 +41,12 @@ float    speedKmh         = 0.0f;
 int      satellitenAnzahl = 0;
 bool     newDistanceAvailable = false;
 
-WebServer   server(80);
+WebServer   server(80);       //Webserver auf port 80 (http)
 Preferences prefs;
-HardwareSerial SerialGPS(1);
+HardwareSerial SerialGPS(1); 
 HardwareSerial SerialTF02(2);
 
-// -------------------- Forward Declarations --------------------
+// -------------------- Forward Declarations (Functions) --------------------
 void updateDisplay(const char* newText);
 void initTF02();
 void tf02Verarbeiten();
@@ -69,7 +70,7 @@ void setup() {
   initGPS();
   initTF02();
 
-  // WLAN AP & Webserver
+  // WLAN AP & Webserver aufstarten
   prefs.begin("gpscfg", false);
   String ssid = prefs.getString("ssid", "ESP32-WLAN");
   String pass = prefs.getString("pass", "12345678");
@@ -84,7 +85,7 @@ void setup() {
   server.on("/sendmsg",  HTTP_POST, handleSendMsg);
   server.begin();
 
-  // Display
+  // Display initialisiern (inkl. virtuelle Displays)
   display.begin(2);
   display.setIntensity(5);
   display.setZone(0, 0, 15);
@@ -111,52 +112,57 @@ void loop() {
   // Custom-Message nach 10 Sekunden löschen
   if (customMsg[0] != '\0' && now - msgTimestamp >= 10000) {
     customMsg[0] = '\0';  // Nachricht löschen
-    currentMsgIndex = 0;   // Warnungsrotation zurücksetzen
-    lastMsgChange = 0;
   }
 
-  // 1) Custom-Message
+  // 1) Custom-Message mit Priorität
   if (customMsg[0] != '\0') {
     updateDisplay(customMsg);
   }
-  // 2) Gefahrencheck
-  else if (SystemActive && satellitenAnzahl >= 4) {
+  // 2) Gefahrencheck (System wird nur aktiviert wenn: SystemActive = true, mehr als 4 GPS-Sateliten verbunden und das Auto schneller als 15 km/h unterwegs ist.)
+  else if (SystemActive && satellitenAnzahl >= 4 && speedKmh >= 15) {
     float abstandM = abstandCm / 100.0f;
     float speedMs = speedKmh / 3.6f;
     s_safe_phys = (speedMs * Reaktionszeit) + (speedMs * speedMs) / (2 * Reibung * g);
     s_safe = fmaxf(s_safe_phys, 0.5f * speedKmh);
 
     if (abstandM < s_safe && abstandM < s_safe_phys) {
-      if (lastMsgChange == 0 || millis() - lastMsgChange >= 2000) {
-        char buf[70];
+      // Nachrichtenrotation alle 2 Sekunden
+      if (lastRotationChange == 0 || now - lastRotationChange >= 2000) {
         switch (currentMsgIndex) {
-          case 0: strcpy(buf, "!!ACHTUNG!!"); break;
-          case 1: strcpy(buf, "Jetzt:"); break;
-          case 2: snprintf(buf, sizeof(buf), "%.1fm", abstandM); break;
-          case 3: strcpy(buf, "Empfohlen:"); break;
-          case 4: snprintf(buf, sizeof(buf), "%.1fm", s_safe); break;
-          case 5: strcpy(buf, "Mindestens:"); break;
-          case 6: snprintf(buf, sizeof(buf), "%.1fm", s_safe_phys); break;
+          case 0: strcpy(warningMsg, "!!ACHTUNG!!"); break;
+          case 1: strcpy(warningMsg, "Jetzt:"); break;
+          case 2: snprintf(warningMsg, sizeof(warningMsg), "%.1fm", abstandM); break;
+          case 3: strcpy(warningMsg, "Empfohlen:"); break;
+          case 4: snprintf(warningMsg, sizeof(warningMsg), "%.1fm", s_safe); break;
+          case 5: strcpy(warningMsg, "Mindestens:"); break;
+          case 6: snprintf(warningMsg, sizeof(warningMsg), "%.1fm", s_safe_phys); break;
         }
-
-        strncpy(customMsg, buf, sizeof(customMsg));
-        customMsg[sizeof(customMsg)-1] = '\0';
-        msgTimestamp = millis();
-        lastMsgChange = millis();
+        
         currentMsgIndex = (currentMsgIndex + 1) % 7;
+        lastRotationChange = now;
       }
+      updateDisplay(warningMsg);
     } else {
-      // Keine Gefahr: leere Anzeige
+      // Keine Gefahr -> leere Anzeige
       updateDisplay("");
+      // Warnmeldung zurücksetzen
+      warningMsg[0] = '\0';
+      currentMsgIndex = 0;
+      lastRotationChange = 0;
     }
   }
   // 3) Leere Anzeige (wenn System inaktiv oder zu wenige Satelliten)
   else {
     updateDisplay("");
+    // Warnmeldung zurücksetzen
+    warningMsg[0] = '\0';
+    currentMsgIndex = 0;
+    lastRotationChange = 0;
   }
 
   display.displayAnimate();
 }
+
 // -------------------- Hilfsfunktionen --------------------
 void updateDisplay(const char* newText) {
   // Nur wenn sich der Text ändert, aktualisieren
@@ -165,7 +171,7 @@ void updateDisplay(const char* newText) {
     textBuffer[sizeof(textBuffer)-1] = '\0';
     
     display.displayClear();
-    display.displayZoneText(0, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);
+    display.displayZoneText(0, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);    //2 mal schreiben für beide virtuellen Diasplays
     display.displayZoneText(1, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);
     display.displayReset();
   }
@@ -174,7 +180,7 @@ void updateDisplay(const char* newText) {
 
 void initTF02() {
   SerialTF02.begin(115200, SERIAL_8N1, 17, 18);
-  Serial.println("TF02 Pro initialisiert");
+  Serial.println("LIDAR AKTIV");
 }
 
 void tf02Verarbeiten() {
@@ -192,15 +198,16 @@ void tf02Verarbeiten() {
     }
   }
   if (abstandCm > 4000) {
-    abstandCm = 999999;
+    abstandCm = 999999;       //Kann laut Herstellerspezifikationen 40m erkennen, dannach, um falschalarme auszulösen auf rediculous hoch setzen
   }
 }
 
 void initGPS() {
   SerialGPS.begin(9600, SERIAL_8N1, 16, -1);
+  Serial.println("GPS-Modul AKTIV");
 }
 
-void gpsVerarbeiten() {
+void gpsVerarbeiten() {       //Manuelle Verarbeitung der GPS-Sätze
   static String line="";
   while (SerialGPS.available()) {
     char c = SerialGPS.read();
@@ -231,7 +238,7 @@ void verarbeiteGGA(String nmea) {
   }
 }
 
-// -------------------- Web UI --------------------
+// -------------------- Web UI ------------------------
 void handleRoot() {
   String html = R"rawliteral(
 <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -243,7 +250,7 @@ input{width:200px}
 .wlan-btn{background:#555}
 </style></head><body>
 <h1>AbstandUI</h1>
-<div style="font-size: 10px; color: #888; margin-top: -8px; margin-bottom: 5px;">Version 1.0.1</div>
+<div style="font-size: 10px; color: #888; margin-top: -8px; margin-bottom: 5px;">Version 1.1.0</div>
 <div class="card">
   <p><b>Geschw.:</b> <span id="speed">...</span> km/h</p>
   <p><b>Satelliten:</b> <span id="sats">...</span></p>
@@ -366,7 +373,7 @@ void handleWlanForm() {
   server.send(200, "text/html; charset=utf-8", html);
 }
 
-void handleWlanSave() {
+void handleWlanSave() {         //Ermöglicht das Ändern von SSID und Passwort
   if (server.hasArg("ssid") && server.hasArg("pass")) {
     prefs.putString("ssid", server.arg("ssid"));
     prefs.putString("pass", server.arg("pass"));
@@ -377,7 +384,7 @@ void handleWlanSave() {
   }
 }
 
-void handleSendMsg() {
+void handleSendMsg() {      //Custom-Message-Logik
   if (server.hasArg("msg")) {
     String m = server.arg("msg");
     m.toCharArray(customMsg, sizeof(customMsg));
