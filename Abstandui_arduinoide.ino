@@ -1,17 +1,17 @@
 // -------------------- Bibliotheken --------------------
-#include <MD_Parola.h>  //Virtuelle Displays und direkt Buchstaben
-#include <MD_MAX72xx.h> // Grundsatz für Steuerung von Matrizen
+#include <MD_Parola.h>                //Virtuelle Displays und direkt Buchstaben
+#include <MD_MAX72xx.h>               // Grundsatz für Steuerung von Matrizen
 #include <SPI.h>
-#include <WiFi.h>       //Für Hotspot für WebUI
-#include <WebServer.h>  //Webui
-#include <Preferences.h>//WLAN konfiguration behalten
-#include <HardwareSerial.h>
-#include "Font_Data.h"  //Custom double font
-#include <math.h>
+#include <WiFi.h>                     //Für Hotspot für WebUI
+#include <WebServer.h>                //Bibliothek um Webserver aufzubauen
+#include <Preferences.h>              //WLAN konfiguration behalten
+#include <HardwareSerial.h>           //Serialausgabe
+#include "Font_Data.h"                //Custom double font
+#include <math.h>                     //Operationen neben 
 
 // -------------------- Anzeige-Konfiguration --------------------
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
-#define DEVICES       32
+#define DEVICES       32              //4 Module mit je 8 8*8 Matrizen
 #define DATA_PIN      4
 #define CLK_PIN       6
 #define CS_PIN        5
@@ -25,8 +25,8 @@ const float g      = 9.81f;           // Erdbeschleunigung (m/s²)
 // -------------------- Variablen für Sicherheitsabstandsberechnungen --------------------
 uint8_t currentMsgIndex = 0;
 unsigned long lastRotationChange = 0; //Zeit seit anderem Text auf matrix
-float s_safe = 0.0f;        //Sicherer Abstand (Faustregel)
-float s_safe_phys = 0.0f;   //Sicherer Abstand (Physikalisch, idealbedingungen)
+float s_safe = 0.0f;                  //Sicherer Abstand (Faustregel)
+float s_safe_phys = 0.0f;             //Sicherer Abstand (Physikalisch, idealbedingungen)
 
 // -------------------- Text-Puffer & Status --------------------
 char textBuffer[100];
@@ -41,14 +41,14 @@ float    speedKmh         = 0.0f;
 int      satellitenAnzahl = 0;
 bool     newDistanceAvailable = false;
 
-WebServer   server(80);       //Webserver auf port 80 (http)
+WebServer   server(80);               //Webserver auf port 80 (http)
 Preferences prefs;
 HardwareSerial SerialGPS(1); 
 HardwareSerial SerialTF02(2);
 
 // -------------------- Debug Terminal --------------------
 String debugLog = "";
-const size_t maxDebugLogSize = 2048; // Maximale Größe des Debug-Logs
+const size_t maxDebugLogSize = 2048;  // Maximale Größe des Debug-Logs
 
 // -------------------- Forward Declarations (Functions) --------------------
 void updateDisplay(const char* newText);
@@ -65,9 +65,9 @@ void handleToggle();
 void handleWlanForm();
 void handleWlanSave();
 void handleSendMsg();
-void handleDebug();           // Neuer Handler für Debug-Terminal
-void handleDebugData();       // Neuer Handler für Debug-Datenabfrage
-void debugPrint(String msg);  // Funktion zum Hinzufügen von Debug-Nachrichten
+void handleDebug();
+void handleDebugData();
+void debugPrint(String msg);
 
 // -------------------- Setup --------------------
 void setup() {
@@ -127,7 +127,7 @@ void loop() {
   // Custom-Message nach 10 Sekunden löschen
   if (customMsg[0] != '\0' && now - msgTimestamp >= 10000) {
     debugPrint("Custom-Message gelöscht");
-    customMsg[0] = '\0';  // Nachricht löschen
+    customMsg[0] = '\0';                      // Nachricht löschen
   }
 
   // 1) Custom-Message mit Priorität
@@ -188,7 +188,7 @@ void updateDisplay(const char* newText) {
     textBuffer[sizeof(textBuffer)-1] = '\0';
     
     display.displayClear();
-    display.displayZoneText(0, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);    //2 mal schreiben für beide virtuellen Diasplays
+    display.displayZoneText(0, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);    //2 mal schreiben für beide virtuellen Dissplays
     display.displayZoneText(1, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);
     display.displayReset();
     
@@ -223,7 +223,7 @@ void tf02Verarbeiten() {
     }
   }
   if (abstandCm > 4000) {
-    abstandCm = 999999;       //Kann laut Herstellerspezifikationen 40m erkennen, dannach, um falschalarme auszulösen auf rediculous hoch setzen
+    abstandCm = 999999;                       //Kann laut Herstellerspezifikationen 40m erkennen, dannach, um fehlalarme auszulösen auf seeeehr hoch setzen damit es nich auslöst
   }
 }
 
@@ -232,7 +232,7 @@ void initGPS() {
   debugPrint("GPS-Modul AKTIV");
 }
 
-void gpsVerarbeiten() {       //Manuelle Verarbeitung der GPS-Sätze
+void gpsVerarbeiten() {                       //Manuelle Verarbeitung der GPS-Sätze
   static String line="";
   while (SerialGPS.available()) {
     char c = SerialGPS.read();
@@ -298,7 +298,7 @@ input{width:200px}
 .debug-btn{background:#007bff}
 </style></head><body>
 <h1>AbstandUI</h1>
-<div style="font-size: 10px; color: #888; margin-top: -8px; margin-bottom: 5px;">Version 1.1.0</div>
+<div style="font-size: 10px; color: #888; margin-top: -8px; margin-bottom: 5px;">Version 1.2.0</div>
 <div class="card">
   <p><b>Geschw.:</b> <span id="speed">...</span> km/h</p>
   <p><b>Satelliten:</b> <span id="sats">...</span></p>
@@ -423,7 +423,7 @@ void handleWlanForm() {
   server.send(200, "text/html; charset=utf-8", html);
 }
 
-void handleWlanSave() {         //Ermöglicht das Ändern von SSID und Passwort
+void handleWlanSave() {                       //Ermöglicht das Ändern von SSID und Passwort
   if (server.hasArg("ssid") && server.hasArg("pass")) {
     prefs.putString("ssid", server.arg("ssid"));
     prefs.putString("pass", server.arg("pass"));
@@ -435,7 +435,7 @@ void handleWlanSave() {         //Ermöglicht das Ändern von SSID und Passwort
   }
 }
 
-void handleSendMsg() {      //Custom-Message-Logik
+void handleSendMsg() {                          //Custom-Message-Logik
   if (server.hasArg("msg")) {
     String m = server.arg("msg");
     m.toCharArray(customMsg, sizeof(customMsg));
