@@ -46,6 +46,10 @@ Preferences prefs;
 HardwareSerial SerialGPS(1); 
 HardwareSerial SerialTF02(2);
 
+// -------------------- Debug Terminal --------------------
+String debugLog = "";
+const size_t maxDebugLogSize = 2048; // Maximale Größe des Debug-Logs
+
 // -------------------- Forward Declarations (Functions) --------------------
 void updateDisplay(const char* newText);
 void initTF02();
@@ -61,11 +65,14 @@ void handleToggle();
 void handleWlanForm();
 void handleWlanSave();
 void handleSendMsg();
+void handleDebug();           // Neuer Handler für Debug-Terminal
+void handleDebugData();       // Neuer Handler für Debug-Datenabfrage
+void debugPrint(String msg);  // Funktion zum Hinzufügen von Debug-Nachrichten
 
 // -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
-  Serial.println("System startet...");
+  debugPrint("System startet...");
 
   initGPS();
   initTF02();
@@ -75,7 +82,7 @@ void setup() {
   String ssid = prefs.getString("ssid", "ESP32-WLAN");
   String pass = prefs.getString("pass", "12345678");
   WiFi.softAP(ssid.c_str(), pass.c_str());
-  Serial.print("AP gestartet: "); Serial.println(ssid);
+  debugPrint("AP gestartet: " + ssid);
 
   server.on("/",         handleRoot);
   server.on("/daten",    handleDaten);
@@ -83,18 +90,26 @@ void setup() {
   server.on("/wlan",     handleWlanForm);
   server.on("/wlan_save",handleWlanSave);
   server.on("/sendmsg",  HTTP_POST, handleSendMsg);
+  server.on("/debug",    handleDebug);        // Debug-Terminal Seite
+  server.on("/debugdata",handleDebugData);    // Debug-Datenabfrage
   server.begin();
 
   // Display initialisiern (inkl. virtuelle Displays)
   display.begin(2);
+  debugPrint("Display initialisiert");
+  
   display.setIntensity(5);
   display.setZone(0, 0, 15);
   display.setZone(1, 16, 31);
+  debugPrint("Zonen konfiguriert");
+  
   display.setFont(0, BigFontLower);
   display.setFont(1, BigFontUpper);
+  debugPrint("Schriftarten gesetzt");
+  
   updateDisplay("Starting...");
   
-  Serial.println("System online");
+  debugPrint("System online");
 }
 
 // -------------------- Loop --------------------
@@ -111,6 +126,7 @@ void loop() {
 
   // Custom-Message nach 10 Sekunden löschen
   if (customMsg[0] != '\0' && now - msgTimestamp >= 10000) {
+    debugPrint("Custom-Message gelöscht");
     customMsg[0] = '\0';  // Nachricht löschen
   }
 
@@ -140,6 +156,7 @@ void loop() {
         
         currentMsgIndex = (currentMsgIndex + 1) % 7;
         lastRotationChange = now;
+        debugPrint("Warnmeldung rotiert: " + String(warningMsg));
       }
       updateDisplay(warningMsg);
     } else {
@@ -174,13 +191,15 @@ void updateDisplay(const char* newText) {
     display.displayZoneText(0, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);    //2 mal schreiben für beide virtuellen Diasplays
     display.displayZoneText(1, textBuffer, PA_CENTER, 50, 1000, PA_PRINT, PA_NO_EFFECT);
     display.displayReset();
+    
+    debugPrint("Display aktualisiert: " + String(newText));
   }
 }
 
 
 void initTF02() {
   SerialTF02.begin(115200, SERIAL_8N1, 17, 18);
-  Serial.println("LIDAR AKTIV");
+  debugPrint("LIDAR AKTIV");
 }
 
 void tf02Verarbeiten() {
@@ -193,7 +212,13 @@ void tf02Verarbeiten() {
     if (idx==9) {
       uint8_t sum=0;
       for(int i=0;i<8;i++) sum += buf[i];
-      if (sum==buf[8]) abstandCm = buf[2] | (buf[3]<<8);
+      if (sum==buf[8]) {
+        uint16_t newDistance = buf[2] | (buf[3]<<8);
+        if (newDistance != abstandCm) {
+          abstandCm = newDistance;
+          debugPrint("LIDAR Abstand: " + String(abstandCm) + " cm");
+        }
+      }
       idx=0;
     }
   }
@@ -204,7 +229,7 @@ void tf02Verarbeiten() {
 
 void initGPS() {
   SerialGPS.begin(9600, SERIAL_8N1, 16, -1);
-  Serial.println("GPS-Modul AKTIV");
+  debugPrint("GPS-Modul AKTIV");
 }
 
 void gpsVerarbeiten() {       //Manuelle Verarbeitung der GPS-Sätze
@@ -225,7 +250,11 @@ void verarbeiteRMC(String nmea) {
   for (int i=0;i<nmea.length();i++) if (nmea[i]==',') k[z++]=i;
   if (z>=7) {
     String s = nmea.substring(k[6]+1,k[7]);
-    speedKmh = s.toFloat() * 1.852f;
+    float newSpeed = s.toFloat() * 1.852f;
+    if (fabs(newSpeed - speedKmh) > 0.5f) {
+      speedKmh = newSpeed;
+      debugPrint("Geschwindigkeit: " + String(speedKmh, 1) + " km/h");
+    }
   }
 }
 
@@ -234,8 +263,26 @@ void verarbeiteGGA(String nmea) {
   for (int i=0;i<nmea.length();i++) if (nmea[i]==',') k[z++]=i;
   if (z>=7) {
     String s = nmea.substring(k[6]+1,k[7]);
-    satellitenAnzahl = s.toInt();
+    int newSats = s.toInt();
+    if (newSats != satellitenAnzahl) {
+      satellitenAnzahl = newSats;
+      debugPrint("Satelliten: " + String(satellitenAnzahl));
+    }
   }
+}
+
+// -------------------- Debug Funktionen --------------------
+void debugPrint(String msg) {
+  unsigned long now = millis();
+  String timestamp = "[" + String(now/1000) + "." + String(now%1000) + "] ";
+  debugLog += timestamp + msg + "\n";
+  
+  // Log auf maximale Größe beschränken
+  if (debugLog.length() > maxDebugLogSize) {
+    debugLog = debugLog.substring(debugLog.length() - maxDebugLogSize);
+  }
+  
+  Serial.println(msg);
 }
 
 // -------------------- Web UI ------------------------
@@ -248,6 +295,7 @@ void handleRoot() {
 button,input{background:#333;color:white;border:none;padding:10px 20px;margin:5px;border-radius:5px;cursor:pointer}
 input{width:200px}
 .wlan-btn{background:#555}
+.debug-btn{background:#007bff}
 </style></head><body>
 <h1>AbstandUI</h1>
 <div style="font-size: 10px; color: #888; margin-top: -8px; margin-bottom: 5px;">Version 1.1.0</div>
@@ -259,6 +307,7 @@ input{width:200px}
 </div>
 <button onclick="toggleSystem()">System Ein/Aus</button>
 <button class="wlan-btn" onclick="location.href='/wlan'">WLAN ändern</button>
+<button class="debug-btn" onclick="location.href='/debug'">Debug Terminal</button>
 <form id="msgForm" onsubmit="sendMsg(event)">
   <p>Custom Message:<br><input id="msg" name="msg" required></p>
   <input type="submit" value="Senden">
@@ -298,6 +347,7 @@ void handleDaten() {
 
 void handleToggle() {
   SystemActive = !SystemActive;
+  debugPrint("Systemstatus geändert: " + String(SystemActive ? "EIN" : "AUS"));
   server.sendHeader("Location","/");
   server.send(302,"text/plain","");
 }
@@ -377,6 +427,7 @@ void handleWlanSave() {         //Ermöglicht das Ändern von SSID und Passwort
   if (server.hasArg("ssid") && server.hasArg("pass")) {
     prefs.putString("ssid", server.arg("ssid"));
     prefs.putString("pass", server.arg("pass"));
+    debugPrint("WLAN Einstellungen gespeichert: " + server.arg("ssid"));
     server.send(200, "text/plain; charset=utf-8", "Gespeichert! Startet neu...");
     delay(1500); ESP.restart();
   } else {
@@ -389,8 +440,104 @@ void handleSendMsg() {      //Custom-Message-Logik
     String m = server.arg("msg");
     m.toCharArray(customMsg, sizeof(customMsg));
     msgTimestamp = millis();
+    debugPrint("Custom-Message gesetzt: " + m);
     server.send(200, "text/plain", "Nachricht gesetzt");
   } else {
     server.send(400, "text/plain", "Fehler: msg fehlt");
   }
+}
+
+// -------------------- Debug Terminal Handlers --------------------
+void handleDebug() {
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Debug Terminal</title>
+  <style>
+    body {
+      background: #121212;
+      color: #0f0;
+      font-family: monospace;
+      margin: 0;
+      padding: 10px;
+    }
+    #terminal {
+      background: #000;
+      padding: 15px;
+      border-radius: 5px;
+      height: 70vh;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-size: 14px;
+    }
+    .controls {
+      margin: 10px 0;
+    }
+    button {
+      background: #333;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 3px;
+      cursor: pointer;
+      margin-right: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Debug Terminal</h1>
+  <div class="controls">
+    <button onclick="refreshLog()">Aktualisieren</button>
+    <button onclick="clearLog()">Log löschen</button>
+    <button onclick="location.href='/'">Zurück</button>
+  </div>
+  <div id="terminal">Lade Debug-Daten...</div>
+  
+  <script>
+    const terminal = document.getElementById('terminal');
+    
+    async function loadDebugData() {
+      try {
+        const response = await fetch('/debugdata');
+        const data = await response.text();
+        terminal.textContent = data;
+        terminal.scrollTop = terminal.scrollHeight;
+      } catch (error) {
+        terminal.textContent = "Fehler beim Laden der Debug-Daten: " + error;
+      }
+    }
+    
+    function refreshLog() {
+      loadDebugData();
+    }
+    
+    async function clearLog() {
+      if (confirm("Debug-Log wirklich löschen?")) {
+        await fetch('/debugdata?clear=1');
+        refreshLog();
+      }
+    }
+    
+    // Automatische Aktualisierung alle 2 Sekunden
+    setInterval(refreshLog, 2000);
+    window.onload = loadDebugData;
+  </script>
+</body>
+</html>
+)rawliteral";
+  server.send(200, "text/html; charset=utf-8", html);
+}
+
+void handleDebugData() {
+  // Log löschen wenn Parameter gesetzt
+  if (server.hasArg("clear")) {
+    debugLog = "";
+    server.send(200, "text/plain", "Debug-Log gelöscht\n");
+    return;
+  }
+  
+  server.send(200, "text/plain", debugLog);
 }
