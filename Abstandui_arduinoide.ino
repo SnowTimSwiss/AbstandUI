@@ -198,34 +198,52 @@ void updateDisplay(const char* newText) {
 
 
 void initTF02() {
-  SerialTF02.begin(115200, SERIAL_8N1, 17, 18);
-  debugPrint("LIDAR AKTIV");
+  // TF02 sendet nur -> TX unbenutzt unbedingt auf -1 setzen!
+  SerialTF02.begin(115200, SERIAL_8N1, 17, -1);
+  debugPrint("LIDAR AKTIV (UART2 RX=17, TX=-1)");
 }
 
 void tf02Verarbeiten() {
-  static uint8_t buf[9], idx = 0;
+  static uint8_t buf[9];
+  static uint8_t idx = 0;
+  static unsigned long lastFrameMs = 0;
+
   while (SerialTF02.available()) {
     uint8_t b = SerialTF02.read();
-    if (idx==0 && b!=0x59) continue;
-    if (idx==1 && b!=0x59) { idx=0; continue; }
+
+    if (idx == 0 && b != 0x59) continue;               // warte auf Header 1
+    if (idx == 1 && b != 0x59) { idx = 0; continue; }  // Header 2 muss auch 0x59 sein
+
     buf[idx++] = b;
-    if (idx==9) {
-      uint8_t sum=0;
-      for(int i=0;i<8;i++) sum += buf[i];
-      if (sum==buf[8]) {
-        uint16_t newDistance = buf[2] | (buf[3]<<8);
-        if (newDistance != abstandCm) {
-          abstandCm = newDistance;
-          debugPrint("LIDAR Abstand: " + String(abstandCm) + " cm");
+
+    if (idx == 9) {
+      uint8_t sum = 0; for (int i = 0; i < 8; i++) sum += buf[i];
+      if (sum == buf[8]) {
+        uint16_t newDistance = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+        // Plausibilisieren (0 = kein Echo; >4000 cm ignorieren statt Überlauf zu erzeugen)
+        if (newDistance > 0 && newDistance <= 4000) {
+          if (newDistance != abstandCm) {
+            abstandCm = newDistance;
+            debugPrint("LIDAR Abstand: " + String(abstandCm) + " cm");
+          }
         }
+        lastFrameMs = millis();
+      } else {
+        debugPrint("TF02 Checksumme falsch -> resync");
       }
-      idx=0;
+      idx = 0; // immer zurücksetzen
     }
   }
-  if (abstandCm > 4000) {
-    abstandCm = 999999;                       //Kann laut Herstellerspezifikationen 40m erkennen, dannach, um fehlalarme auszulösen auf seeeehr hoch setzen damit es nich auslöst
+
+  // Wenn länger als 1 s keine Frames: Abstand auf 0 und Hinweis
+  if (millis() - lastFrameMs > 1000) {
+    if (abstandCm != 0) {
+      abstandCm = 0;
+      debugPrint("TF02: keine Daten >1s (Abstand=0)");
+    }
   }
 }
+
 
 void initGPS() {
   SerialGPS.begin(9600, SERIAL_8N1, 16, -1);
