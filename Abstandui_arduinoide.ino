@@ -198,7 +198,6 @@ void updateDisplay(const char* newText) {
 
 
 void initTF02() {
-  // TF02 sendet nur -> TX unbenutzt unbedingt auf -1 setzen!
   SerialTF02.begin(115200, SERIAL_8N1, 17, -1);
   debugPrint("LIDAR AKTIV (UART2 RX=17, TX=-1)");
 }
