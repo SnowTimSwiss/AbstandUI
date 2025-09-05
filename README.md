@@ -60,3 +60,5 @@
   * Speed ≥ 15 km/h
 * Safe distance is calculated using both physics-based and rule-of-thumb formulas.
 * Custom messages are shown for 10 seconds.
+
+This Readme was created using AI
